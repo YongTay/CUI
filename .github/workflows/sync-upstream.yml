@@ -1,0 +1,336 @@
+name: Sync fork with upstream
+
+on:
+  schedule:
+    # UTC 02/08/14/20 → 北京时间 10:00 / 16:00 / 22:00 / 04:00
+    - cron: '0 2,8,14,20 * * *'
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: '只同步指定分支（留空则使用 SYNC_BRANCHES）'
+        required: false
+        default: ''
+      tag_mode:
+        description: 'incremental 只补缺失的 tag；strict 完全对齐上游 tag 集合'
+        required: true
+        default: incremental
+        type: choice
+        options:
+          - incremental
+          - strict
+
+permissions:
+  contents: write
+  issues: write
+
+concurrency:
+  group: sync-upstream
+  cancel-in-progress: false
+
+env:
+  # ===== 按仓库调整的三行，已按 yappologistic/CUI 填好 =====
+  UPSTREAM_REPO: yappologistic/CUI
+  UPSTREAM_BRANCH: master
+  SYNC_BRANCHES: master
+  # ====================================================
+  MERGE_STRATEGY: merge      # merge | rebase
+  SYNC_TAGS: 'true'          # 注意引号，不加会被 YAML 解析成布尔值
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout fork
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure git
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      # ---------------------------------------------------------------
+      # 1. 分支同步
+      # ---------------------------------------------------------------
+      - name: Sync branches
+        id: branches
+        env:
+          MANUAL_BRANCH: ${{ github.event.inputs.branch }}
+          UPSTREAM_URL_OVERRIDE: ''
+        run: |
+          set -uo pipefail
+
+          UPSTREAM_URL="https://github.com/${UPSTREAM_REPO}.git"
+          SUMMARY_FILE="$(mktemp)"
+          add() { printf '%s\n' "$*" >> "$SUMMARY_FILE"; }
+          echo "status=ok" >> "$GITHUB_OUTPUT"
+
+          if [ -n "${MANUAL_BRANCH}" ]; then
+            BRANCHES="${MANUAL_BRANCH}"
+          else
+            BRANCHES="${SYNC_BRANCHES}"
+          fi
+
+          # 0. 上游存在性：删库 / 改名到别处 / 转私有 都在这里被拦下
+          if ! UPSTREAM_HEAD="$(git ls-remote --exit-code "$UPSTREAM_URL" \
+                "refs/heads/${UPSTREAM_BRANCH}" 2>/dev/null | cut -f1)" \
+             || [ -z "${UPSTREAM_HEAD}" ]; then
+            echo "::warning::上游 ${UPSTREAM_REPO} 的 ${UPSTREAM_BRANCH} 不可达，本次跳过（可能已删除、改名或转为私有）"
+            add "上游不可达，未执行任何同步"
+            echo "status=missing" >> "$GITHUB_OUTPUT"
+            { echo "summary<<EOF"; cat "$SUMMARY_FILE"; echo "EOF"; } >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "上游 ${UPSTREAM_BRANCH} HEAD: ${UPSTREAM_HEAD}"
+
+          # 1. 准备 remote，并确保所有 origin 分支都在本地可见
+          git remote remove upstream 2>/dev/null || true
+          git remote add upstream "$UPSTREAM_URL"
+          git fetch --no-tags origin '+refs/heads/*:refs/remotes/origin/*' >/dev/null 2>&1 || true
+          if ! git fetch --no-tags upstream \
+                "+refs/heads/${UPSTREAM_BRANCH}:refs/remotes/upstream/${UPSTREAM_BRANCH}"; then
+            echo "::warning::fetch 上游失败，本次跳过分支同步"
+            add "fetch 上游失败，未执行同步"
+            echo "status=missing" >> "$GITHUB_OUTPUT"
+            { echo "summary<<EOF"; cat "$SUMMARY_FILE"; echo "EOF"; } >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          CONFLICT=0
+          for BR in $BRANCHES; do
+            echo "===== 分支 ${BR} ====="
+
+            if ! git rev-parse --verify --quiet "refs/remotes/origin/${BR}" >/dev/null; then
+              echo "::warning::Fork 中不存在分支 ${BR}，已跳过"
+              add "- ${BR}: Fork 中不存在，已跳过"
+              continue
+            fi
+
+            git checkout -B "$BR" "refs/remotes/origin/${BR}" >/dev/null 2>&1
+            git reset --hard "refs/remotes/origin/${BR}" >/dev/null 2>&1
+
+            # 2. 历史连续性：上游地址被他人用同名仓库重新注册时拦住
+            if ! git merge-base HEAD "refs/remotes/upstream/${UPSTREAM_BRANCH}" >/dev/null 2>&1; then
+              echo "::error::分支 ${BR} 与上游无共同祖先，疑似上游被同名仓库替换，已中止"
+              CONFLICT=1
+              add "- ${BR}: 与上游无共同祖先，已中止（疑似上游被重建）"
+              continue
+            fi
+
+            # 3. 已是最新则跳过，避免空提交
+            if git merge-base --is-ancestor "refs/remotes/upstream/${UPSTREAM_BRANCH}" HEAD; then
+              echo "分支 ${BR} 已包含上游全部提交，无需同步"
+              add "- ${BR}: 已是最新"
+              continue
+            fi
+
+            # 4. 合并
+            if [ "${MERGE_STRATEGY}" = "rebase" ]; then
+              if git rebase "refs/remotes/upstream/${UPSTREAM_BRANCH}"; then
+                :
+              else
+                git rebase --abort >/dev/null 2>&1 || true
+                CONFLICT=1
+                add "- ${BR}: rebase 冲突，需手动解决"
+                continue
+              fi
+            else
+              if git merge --no-edit "refs/remotes/upstream/${UPSTREAM_BRANCH}"; then
+                :
+              else
+                git merge --abort >/dev/null 2>&1 || true
+                CONFLICT=1
+                add "- ${BR}: merge 冲突，需手动解决"
+                continue
+              fi
+            fi
+
+            # 5. 推送，永不带 --force
+            if git push origin "HEAD:${BR}"; then
+              echo "分支 ${BR} 同步完成"
+              add "- ${BR}: 已同步到 $(git rev-parse --short HEAD)"
+            else
+              CONFLICT=1
+              add "- ${BR}: 推送被拒（分支保护规则或并发推送）"
+            fi
+          done
+
+          if [ "$CONFLICT" -eq 1 ]; then
+            echo "status=conflict" >> "$GITHUB_OUTPUT"
+          fi
+          { echo "summary<<EOF"; cat "$SUMMARY_FILE"; echo "EOF"; } >> "$GITHUB_OUTPUT"
+
+      # ---------------------------------------------------------------
+      # 2. Tag 同步（与分支解耦，分支冲突也照常执行）
+      # ---------------------------------------------------------------
+      - name: Sync tags
+        id: tags
+        if: env.SYNC_TAGS == 'true' && steps.branches.outputs.status != 'missing'
+        env:
+          TAG_MODE: ${{ github.event.inputs.tag_mode || 'incremental' }}
+        run: |
+          set -uo pipefail
+
+          UPSTREAM_URL="https://github.com/${UPSTREAM_REPO}.git"
+          SUMMARY_FILE="$(mktemp)"
+          add() { printf '%s\n' "$*" >> "$SUMMARY_FILE"; }
+          echo "status=ok" >> "$GITHUB_OUTPUT"
+
+          if ! git ls-remote --exit-code "$UPSTREAM_URL" HEAD >/dev/null 2>&1; then
+            echo "::warning::上游不可达，跳过 tag 同步"
+            add "上游不可达，未同步 tag"
+            echo "status=skipped" >> "$GITHUB_OUTPUT"
+            { echo "summary<<EOF"; cat "$SUMMARY_FILE"; echo "EOF"; } >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          git remote remove upstream 2>/dev/null || true
+          git remote add upstream "$UPSTREAM_URL"
+          git fetch --tags --force upstream '+refs/tags/*:refs/tags/*' >/dev/null 2>&1 || true
+
+          # 只取 --refs 结果：去掉 annotated tag 的 ^{} 附行，否则数量会翻倍
+          git ls-remote --tags --refs "$UPSTREAM_URL" \
+            | awk '{print $2"\t"$1}' | sed 's#refs/tags/##' | sort > /tmp/up.tsv
+          git ls-remote --tags --refs origin \
+            | awk '{print $2"\t"$1}' | sed 's#refs/tags/##' | sort > /tmp/fork.tsv
+
+          cut -f1 /tmp/up.tsv   | sort > /tmp/up.names
+          cut -f1 /tmp/fork.tsv | sort > /tmp/fork.names
+
+          declare -A UP_SHA=() FORK_SHA=()
+          while IFS=$'\t' read -r n s; do [ -n "${n}" ] && UP_SHA["${n}"]="${s}"; done < /tmp/up.tsv
+          while IFS=$'\t' read -r n s; do [ -n "${n}" ] && FORK_SHA["${n}"]="${s}"; done < /tmp/fork.tsv
+
+          echo "上游 tag 数：$(wc -l < /tmp/up.names)，Fork tag 数：$(wc -l < /tmp/fork.names)"
+          add "上游 $(wc -l < /tmp/up.names) 个 tag，Fork 原有 $(wc -l < /tmp/fork.names) 个，模式 ${TAG_MODE}"
+
+          ADDED=0; MOVED=0; GONE=0; FAIL=0
+
+          # 6. 补上 Fork 缺失的 tag
+          while read -r t; do
+            [ -z "${t}" ] && continue
+            if git push origin "refs/tags/${t}:refs/tags/${t}" >/dev/null 2>&1; then
+              echo "新增 tag: ${t}"
+              add "- 新增 ${t}"
+              ADDED=$((ADDED+1))
+            else
+              echo "::warning::推送 tag ${t} 失败（可能被 tag 保护规则拦下）"
+              add "- ${t} 推送失败"
+              FAIL=1
+            fi
+          done < <(comm -23 /tmp/up.names /tmp/fork.names)
+
+          # 7. 处理指向被改写的 tag
+          while read -r t; do
+            [ -z "${t}" ] && continue
+            [ "${UP_SHA[${t}]:-}" = "${FORK_SHA[${t}]:-}" ] && continue
+            if [ "${TAG_MODE}" = "strict" ]; then
+              echo "::notice::tag ${t} 指向上游已改写的对象，强制更新"
+              if git push --force origin "refs/tags/${t}:refs/tags/${t}" >/dev/null 2>&1; then
+                add "- 更新 ${t}（上游已改写）"
+                MOVED=$((MOVED+1))
+              else
+                add "- ${t} 强制更新失败"
+                FAIL=1
+              fi
+            else
+              echo "::notice::tag ${t} 与上游不一致，incremental 模式不处理"
+              add "- ${t} 与上游不一致（保留，可用 strict 对齐）"
+              MOVED=$((MOVED+1))
+            fi
+          done < <(comm -12 /tmp/up.names /tmp/fork.names)
+
+          # 8. 处理仅存在于 Fork 的 tag
+          while read -r t; do
+            [ -z "${t}" ] && continue
+            if [ "${TAG_MODE}" = "strict" ]; then
+              echo "::notice::tag ${t} 上游已删除，同步删除"
+              if git push origin --delete "refs/tags/${t}" >/dev/null 2>&1; then
+                add "- 删除 ${t}（上游已无）"
+                GONE=$((GONE+1))
+              else
+                add "- ${t} 删除失败"
+                FAIL=1
+              fi
+            else
+              echo "::notice::tag ${t} 仅存在于 Fork，incremental 模式保留"
+              add "- ${t} 仅存在于 Fork（保留）"
+              GONE=$((GONE+1))
+            fi
+          done < <(comm -13 /tmp/up.names /tmp/fork.names)
+
+          add "结果：新增 ${ADDED}，改写 ${MOVED}，多余 ${GONE}"
+
+          if [ "${ADDED}" -eq 0 ] && [ "${MOVED}" -eq 0 ] && [ "${GONE}" -eq 0 ]; then
+            echo "tag 已与上游一致"
+            add "tag 已与上游一致，无需操作"
+          fi
+
+          if [ "$FAIL" -ne 0 ]; then
+            echo "status=failed" >> "$GITHUB_OUTPUT"
+          fi
+          { echo "summary<<EOF"; cat "$SUMMARY_FILE"; echo "EOF"; } >> "$GITHUB_OUTPUT"
+
+      # ---------------------------------------------------------------
+      # 3. 失败时开 issue（同标题只保留一个，后续追加评论）
+      # ---------------------------------------------------------------
+      - name: Open or update issue on failure
+        if: steps.branches.outputs.status == 'conflict' || steps.tags.outputs.status == 'failed'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BRANCH_SUMMARY: ${{ steps.branches.outputs.summary }}
+          TAG_SUMMARY: ${{ steps.tags.outputs.summary }}
+        run: |
+          set -uo pipefail
+          TITLE="Fork 同步失败：需手动处理"
+          BODY_FILE="$(mktemp)"
+
+          {
+            printf '同步时间：%s\n' "$(date -u '+%Y-%m-%d %H:%M UTC')"
+            printf '触发方式：%s\n\n' "${{ github.event_name }}"
+            printf '上游：`%s`，分支 `%s`\n\n' "${UPSTREAM_REPO}" "${UPSTREAM_BRANCH}"
+            printf '### 分支\n\n%s\n\n' "${BRANCH_SUMMARY:-（无）}"
+            printf '### Tag\n\n%s\n\n' "${TAG_SUMMARY:-（无）}"
+            cat <<'MD'
+          ### 本地解决步骤
+
+          ```bash
+          # 首次需要，之后可跳过
+          git remote add upstream https://github.com/yappologistic/CUI.git
+          git fetch upstream --tags --force
+
+          git checkout master
+          git merge upstream/master
+          # 解决冲突 → git add . && git commit
+          git push origin master
+          ```
+
+          处理完成后这个工作流下一次运行会自动恢复正常，本 issue 可以手动关闭。
+          MD
+          } > "$BODY_FILE"
+
+          EXISTING="$(gh issue list --repo "${GITHUB_REPOSITORY}" \
+            --state open --search "${TITLE} in:title" \
+            --json number --jq '.[0].number // empty')"
+
+          if [ -n "${EXISTING}" ]; then
+            echo "追加评论到 issue #${EXISTING}"
+            gh issue comment "${EXISTING}" --repo "${GITHUB_REPOSITORY}" --body-file "$BODY_FILE"
+          else
+            echo "新建 issue"
+            gh issue create --repo "${GITHUB_REPOSITORY}" \
+              --title "${TITLE}" --body-file "$BODY_FILE"
+          fi
+
+      # ---------------------------------------------------------------
+      # 4. 有未解决项则让 job 变红
+      # ---------------------------------------------------------------
+      - name: Fail when unresolved
+        if: steps.branches.outputs.status == 'conflict' || steps.tags.outputs.status == 'failed'
+        run: |
+          echo "::error::存在未能自动同步的分支或 tag，详见上方日志与仓库 issue"
+          exit 1
