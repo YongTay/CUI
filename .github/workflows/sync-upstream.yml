@@ -34,6 +34,14 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
+      - name: Check write permission
+        run: |
+          echo "token can push: $(git push --dry-run origin HEAD:refs/heads/sync-perm-probe 2>&1 | head -3 | tr '\n' ' ')"
+          echo "default workflow permissions:"
+          curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/permissions/workflow" || true
+
       - name: Sync code
         run: |
           set -uo pipefail
@@ -41,12 +49,12 @@ jobs:
           OUT=/tmp/notes.txt
           : > "$OUT"
 
-          note() { printf '%s\n' "- $1" >> "$OUT"; }
+          note() { printf '%s
+' "- $1" >> "$OUT"; }
 
           SHA=$(git ls-remote --exit-code "$URL" "refs/heads/${UPSTREAM_BRANCH}" 2>/dev/null | cut -f1) || SHA=""
           if [ -z "$SHA" ]; then
             echo "::warning::upstream ${UPSTREAM_REPO}/${UPSTREAM_BRANCH} not reachable, skip"
-            printf '%s\n' "### 同步跳过" "" "上游不可达（已删除、改名或转为私有），未做任何改动。" >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
           echo "upstream HEAD: $SHA"
@@ -90,35 +98,49 @@ jobs:
               continue
             fi
 
-            if git push origin "HEAD:${BR}"; then
-              echo "${BR} synced"
+            if PUSH_ERR=$(git push origin "HEAD:${BR}" 2>&1); then
+              echo "${BR} synced: $(git rev-parse --short HEAD)"
               note "${BR}: 同步到 $(git rev-parse --short HEAD)"
             else
-              note "${BR}: 推送被拒（分支保护或并发）"
+              echo "::error::${BR} push failed"
+              printf '%s
+' "$PUSH_ERR"
+              note "${BR}: 推送失败（见日志）"
               FAILED=1
             fi
           done
 
           if [ "${SYNC_TAGS}" = "true" ]; then
             echo "=== tags ==="
-            git fetch --tags --force upstream "+refs/tags/*:refs/tags/*" > /dev/null 2>&1 || true
+            if ! FETCH_ERR=$(git fetch --tags --force upstream "+refs/tags/*:refs/tags/*" 2>&1); then
+              echo "::warning::fetch upstream tags failed"
+              printf '%s
+' "$FETCH_ERR"
+              FAILED=1
+            fi
+            echo "local tags after fetch: $(git tag | wc -l)"
+
             git ls-remote --tags --refs "$URL" | awk '{print $2}' | sed 's#refs/tags/##' | sort > /tmp/up.txt
             git ls-remote --tags --refs origin | awk '{print $2}' | sed 's#refs/tags/##' | sort > /tmp/fork.txt
+            echo "upstream tags: $(wc -l < /tmp/up.txt), fork tags: $(wc -l < /tmp/fork.txt)"
 
             for T in $(comm -23 /tmp/up.txt /tmp/fork.txt); do
-              if git push origin "refs/tags/${T}:refs/tags/${T}" > /dev/null 2>&1; then
+              echo "pushing tag: ${T}"
+              if TAG_ERR=$(git push origin "refs/tags/${T}:refs/tags/${T}" 2>&1); then
                 echo "new tag: ${T}"
                 note "tag: 新增 ${T}"
               else
-                note "tag: ${T} 推送失败"
+                echo "::error::tag ${T} push failed"
+                printf '%s
+' "$TAG_ERR"
+                note "tag: ${T} 推送失败（见日志）"
                 FAILED=1
               fi
             done
-
-            echo "upstream tags: $(wc -l < /tmp/up.txt), fork tags: $(wc -l < /tmp/fork.txt)"
           fi
 
-          printf '%s\n' "### 同步结果" "" >> "$GITHUB_STEP_SUMMARY"
+          printf '%s
+' "### 同步结果" "" >> "$GITHUB_STEP_SUMMARY"
           cat "$OUT" >> "$GITHUB_STEP_SUMMARY"
 
           if [ "$FAILED" -ne 0 ]; then
