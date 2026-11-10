@@ -2,153 +2,126 @@ name: Sync fork with upstream
 
 on:
   schedule:
-    # UTC 02/08/14/20 → 北京时间 10:00 / 16:00 / 22:00 / 04:00
     - cron: '0 2,8,14,20 * * *'
   workflow_dispatch:
 
 permissions:
-  contents: write      # 唯一的权限，够用
+  contents: write
 
 concurrency:
   group: sync-upstream
   cancel-in-progress: false
 
 env:
-  # ===== 按仓库调整，已按 yappologistic/CUI 填好 =====
   UPSTREAM_REPO: yappologistic/CUI
   UPSTREAM_BRANCH: master
   SYNC_BRANCHES: master
-  SYNC_TAGS: 'true'          # 不想同步 tag 就改成 'false'
-  # ================================================
+  SYNC_TAGS: 'true'
 
 jobs:
   sync:
     runs-on: ubuntu-latest
     timeout-minutes: 10
-
     steps:
       - name: Checkout fork
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          # 关键：必须用 GITHUB_TOKEN，它触发的 push 不会再唤起其它 workflow
           token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Configure git
         run: |
-          git config user.name  "github-actions[bot]"
+          git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
       - name: Sync code
         run: |
           set -uo pipefail
-          UPSTREAM_URL="https://github.com/${UPSTREAM_REPO}.git"
-          NOTES=""
+          URL="https://github.com/${UPSTREAM_REPO}.git"
+          OUT=/tmp/notes.txt
+          : > "$OUT"
 
-          add() { NOTES="${NOTES}- $*
-"; }
+          note() { printf '%s\n' "- $1" >> "$OUT"; }
 
-          # 0. 上游存在性：删库 / 改名 / 转私有都在这里被拦下
-          if ! HEAD_SHA="$(git ls-remote --exit-code "$UPSTREAM_URL" \
-                "refs/heads/${UPSTREAM_BRANCH}" 2>/dev/null | cut -f1)" \
-             || [ -z "${HEAD_SHA}" ]; then
-            echo "::warning::上游 ${UPSTREAM_REPO}/${UPSTREAM_BRANCH} 不可达，本次跳过"
-            {
-              echo "### 同步跳过"
-              echo "上游不可达（可能已删除、改名或转为私有），未做任何改动。"
-            } >> "$GITHUB_STEP_SUMMARY"
+          SHA=$(git ls-remote --exit-code "$URL" "refs/heads/${UPSTREAM_BRANCH}" 2>/dev/null | cut -f1) || SHA=""
+          if [ -z "$SHA" ]; then
+            echo "::warning::upstream ${UPSTREAM_REPO}/${UPSTREAM_BRANCH} not reachable, skip"
+            printf '%s\n' "### 同步跳过" "" "上游不可达（已删除、改名或转为私有），未做任何改动。" >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
-          echo "上游 ${UPSTREAM_BRANCH} HEAD: ${HEAD_SHA}"
+          echo "upstream HEAD: $SHA"
 
-          # 1. 准备 remote
           git remote remove upstream 2>/dev/null || true
-          git remote add upstream "$UPSTREAM_URL"
-          git fetch --no-tags origin '+refs/heads/*:refs/remotes/origin/*' >/dev/null 2>&1 || true
-          git fetch --no-tags upstream \
-            "+refs/heads/${UPSTREAM_BRANCH}:refs/remotes/upstream/${UPSTREAM_BRANCH}"
+          git remote add upstream "$URL"
+          git fetch --no-tags origin "+refs/heads/*:refs/remotes/origin/*" > /dev/null 2>&1 || true
+          git fetch --no-tags upstream "+refs/heads/${UPSTREAM_BRANCH}:refs/remotes/upstream/${UPSTREAM_BRANCH}"
 
           FAILED=0
           for BR in ${SYNC_BRANCHES}; do
-            echo "===== 分支 ${BR} ====="
+            echo "=== branch ${BR} ==="
 
-            if ! git rev-parse --verify --quiet "refs/remotes/origin/${BR}" >/dev/null; then
-              echo "::warning::Fork 中不存在分支 ${BR}"
-              add "${BR}：Fork 中不存在，已跳过"
+            if ! git rev-parse --verify --quiet "refs/remotes/origin/${BR}" > /dev/null; then
+              echo "::warning::branch ${BR} not found in fork"
+              note "${BR}: Fork 中不存在，已跳过"
               continue
             fi
-            git checkout -B "$BR" "refs/remotes/origin/${BR}" >/dev/null 2>&1
-            git reset --hard "refs/remotes/origin/${BR}" >/dev/null 2>&1
 
-            # 2. 历史连续性：上游被同名仓库顶替时拦住
-            if ! git merge-base HEAD "refs/remotes/upstream/${UPSTREAM_BRANCH}" >/dev/null 2>&1; then
-              echo "::error::${BR} 与上游无共同祖先，疑似上游被重建，已中止"
-              add "${BR}：与上游无共同祖先，已中止"
+            git checkout -B "$BR" "refs/remotes/origin/${BR}" > /dev/null 2>&1
+            git reset --hard "refs/remotes/origin/${BR}" > /dev/null 2>&1
+
+            if ! git merge-base HEAD "refs/remotes/upstream/${UPSTREAM_BRANCH}" > /dev/null 2>&1; then
+              echo "::error::${BR} shares no history with upstream"
+              note "${BR}: 与上游无共同祖先，已中止"
               FAILED=1
               continue
             fi
 
-            # 3. 已最新则跳过
             if git merge-base --is-ancestor "refs/remotes/upstream/${UPSTREAM_BRANCH}" HEAD; then
-              echo "${BR} 已是最新"
-              add "${BR}：已是最新"
+              echo "${BR} already up to date"
+              note "${BR}: 已是最新"
               continue
             fi
 
-            # 4. 合并（不加 --force，永不破坏已有提交）
             if ! git merge --no-edit "refs/remotes/upstream/${UPSTREAM_BRANCH}"; then
-              git merge --abort >/dev/null 2>&1 || true
-              echo "::error::${BR} 合并冲突"
-              add "${BR}：合并冲突，需手动解决"
+              git merge --abort > /dev/null 2>&1 || true
+              echo "::error::${BR} merge conflict"
+              note "${BR}: 合并冲突，需手动解决"
               FAILED=1
               continue
             fi
 
-            # 5. 推送
             if git push origin "HEAD:${BR}"; then
-              echo "${BR} 同步完成"
-              add "${BR}：同步到 \`$(git rev-parse --short HEAD)\`"
+              echo "${BR} synced"
+              note "${BR}: 同步到 $(git rev-parse --short HEAD)"
             else
-              add "${BR}：推送被拒（分支保护或并发）"
+              note "${BR}: 推送被拒（分支保护或并发）"
               FAILED=1
             fi
           done
 
-          # 6. 同步 tag（只补缺失的，不删除、不改写）
           if [ "${SYNC_TAGS}" = "true" ]; then
-            echo "===== 同步 tags ====="
-            git fetch --tags --force upstream '+refs/tags/*:refs/tags/*' >/dev/null 2>&1 || true
+            echo "=== tags ==="
+            git fetch --tags --force upstream "+refs/tags/*:refs/tags/*" > /dev/null 2>&1 || true
+            git ls-remote --tags --refs "$URL" | awk '{print $2}' | sed 's#refs/tags/##' | sort > /tmp/up.txt
+            git ls-remote --tags --refs origin | awk '{print $2}' | sed 's#refs/tags/##' | sort > /tmp/fork.txt
 
-            git ls-remote --tags --refs "$UPSTREAM_URL" \
-              | awk '{print $2}' | sed 's#refs/tags/##' | sort > /tmp/up.names
-            git ls-remote --tags --refs origin \
-              | awk '{print $2}' | sed 's#refs/tags/##' | sort > /tmp/fork.names
+            for T in $(comm -23 /tmp/up.txt /tmp/fork.txt); do
+              if git push origin "refs/tags/${T}:refs/tags/${T}" > /dev/null 2>&1; then
+                echo "new tag: ${T}"
+                note "tag: 新增 ${T}"
+              else
+                note "tag: ${T} 推送失败"
+                FAILED=1
+              fi
+            done
 
-            NEW="$(comm -23 /tmp/up.names /tmp/fork.names)"
-            if [ -z "${NEW}" ]; then
-              echo "tag 已与上游一致"
-              add "tag：已与上游一致"
-            else
-              for t in ${NEW}; do
-                if git push origin "refs/tags/${t}:refs/tags/${t}" >/dev/null 2>&1; then
-                  echo "新增 tag: ${t}"
-                  add "tag：新增 \`${t}\`"
-                else
-                  add "tag：\`${t}\` 推送失败"
-                  FAILED=1
-                fi
-              done
-            fi
-            echo "上游 $(wc -l < /tmp/up.names) 个 / Fork $(wc -l < /tmp/fork.names) 个"
+            echo "upstream tags: $(wc -l < /tmp/up.txt), fork tags: $(wc -l < /tmp/fork.txt)"
           fi
 
-          {
-            echo "### 同步结果"
-            echo ""
-            echo "${NOTES}"
-          } >> "$GITHUB_STEP_SUMMARY"
+          printf '%s\n' "### 同步结果" "" >> "$GITHUB_STEP_SUMMARY"
+          cat "$OUT" >> "$GITHUB_STEP_SUMMARY"
 
           if [ "$FAILED" -ne 0 ]; then
-            echo "::error::存在未能自动同步的项目，详见上方日志"
+            echo "::error::部分内容未能自动同步，详见上方日志"
             exit 1
           fi
