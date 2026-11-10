@@ -16,7 +16,6 @@ env:
   UPSTREAM_REPO: yappologistic/CUI
   UPSTREAM_BRANCH: master
   SYNC_BRANCHES: master
-  SYNC_TAGS: 'true'
 
 jobs:
   sync:
@@ -34,16 +33,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-      - name: Diagnose permissions
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          echo "--- default workflow permissions ---"
-          gh api "repos/${GITHUB_REPOSITORY}/actions/permissions/workflow" --jq '.default_workflow_permissions' || echo "api call failed"
-          echo "--- dry-run push probe ---"
-          git push --dry-run origin "HEAD:refs/heads/sync-perm-probe" 2>&1 | head -5 || true
-
-      - name: Sync code
+      - name: Sync branches
         run: |
           set -uo pipefail
           URL="https://github.com/${UPSTREAM_REPO}.git"
@@ -55,6 +45,7 @@ jobs:
           SHA=$(git ls-remote --exit-code "$URL" "refs/heads/${UPSTREAM_BRANCH}" 2>/dev/null | cut -f1) || SHA=""
           if [ -z "$SHA" ]; then
             echo "::warning::upstream ${UPSTREAM_REPO}/${UPSTREAM_BRANCH} not reachable, skip"
+            echo "上游不可达（已删除、改名或转私有），本次未做任何改动。" >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
           echo "upstream HEAD: $SHA"
@@ -90,12 +81,18 @@ jobs:
               continue
             fi
 
+            BEFORE=$(git rev-parse HEAD)
             if ! git merge --no-edit "refs/remotes/upstream/${UPSTREAM_BRANCH}"; then
               git merge --abort > /dev/null 2>&1 || true
               echo "::error::${BR} merge conflict"
               note "${BR}: 合并冲突，需手动解决"
               FAILED=1
               continue
+            fi
+
+            if git diff --name-only "$BEFORE" HEAD | grep -q "^.github/workflows/"; then
+              echo "::warning::本次合并包含 .github/workflows/ 变更，推送可能被令牌权限拦下"
+              note "${BR}: 注意，合并内容包含 workflow 文件变更"
             fi
 
             if PUSH_ERR=$(git push origin "HEAD:${BR}" 2>&1); then
@@ -108,37 +105,6 @@ jobs:
               FAILED=1
             fi
           done
-
-          if [ "${SYNC_TAGS}" = "true" ]; then
-            echo "=== tags ==="
-
-            if FETCH_ERR=$(git fetch --tags --force upstream "+refs/tags/*:refs/tags/*" 2>&1); then
-              echo "fetch tags ok"
-            else
-              echo "::warning::fetch upstream tags failed"
-              echo "$FETCH_ERR"
-              FAILED=1
-            fi
-
-            echo "local tags after fetch: $(git tag | wc -l)"
-
-            git ls-remote --tags --refs "$URL" | awk '{print $2}' | sed 's#refs/tags/##' | sort > /tmp/up.txt
-            git ls-remote --tags --refs origin | awk '{print $2}' | sed 's#refs/tags/##' | sort > /tmp/fork.txt
-            echo "upstream tags: $(wc -l < /tmp/up.txt), fork tags: $(wc -l < /tmp/fork.txt)"
-
-            for T in $(comm -23 /tmp/up.txt /tmp/fork.txt); do
-              echo "pushing tag: ${T}"
-              if TAG_ERR=$(git push origin "refs/tags/${T}:refs/tags/${T}" 2>&1); then
-                echo "new tag: ${T}"
-                note "tag: 新增 ${T}"
-              else
-                echo "::error::tag ${T} push failed"
-                echo "$TAG_ERR"
-                note "tag: ${T} 推送失败（见日志）"
-                FAILED=1
-              fi
-            done
-          fi
 
           echo "### 同步结果" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
