@@ -26,7 +26,7 @@ while (cui_app_frame(app)) {
 cui_app_destroy(app);
 ```
 
-`cui_app_frame` shows the previous frame, waits until there is something to do, and starts the next one. It returns false once the window is closed. The callback form also gives smooth live resizing on Windows and macOS: the content keeps redrawing while the user drags the window's edge.
+`cui_app_frame` shows the previous frame, waits until there is something to do, and starts the next one. It returns false once the window is closed, or on macOS when the app is quit from its menu, with Cmd-Q, from the Dock or by AppleScript, so the code after the loop always runs. The callback form also gives smooth live resizing on Windows and macOS: the content keeps redrawing while the user drags the window's edge.
 
 `cui_app_desc` sets up the window. Every field is optional:
 
@@ -41,7 +41,8 @@ cui_app_destroy(app);
 | `hidden` | Create the window without showing it, for tests. |
 | `renderer` | `CUI_RENDERER_AUTO` (default), `CUI_RENDERER_OPENGL` or `CUI_RENDERER_SOFTWARE`. |
 | `theme`, `accent` | The theme and accent to start with. |
-| `follow_system_theme` | Use the system's light or dark setting where the platform reports it. |
+| `follow_system_theme` | Use the system's light or dark setting where the platform reports it. `cui_app_follow_system_theme` turns it on or off while the app runs. |
+| `app_id` | Linux: the name of the app's `.desktop` file without ".desktop", such as "org.example.Notes", so the desktop shows the app's name and icon for the window. See [Your app's name and icon on Linux](getting-started.md#your-apps-name-and-icon-on-linux). |
 
 ## The window
 

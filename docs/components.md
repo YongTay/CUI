@@ -163,7 +163,9 @@ cui_range_slider(ui, "Price", &lo, &hi, 0, 500);
 
 Drag past either end and the track stretches like rubber, then springs back on release. Clicking the track glides the thumb to the spot. Options: `step`, `show_value`, `format`, `disabled`, `width`. Keyboard: arrows step (Shift for 10 steps), Home and End.
 
-Both return true on a frame the value changes. `volume` is your `float`. The slider writes it while it is dragged and keeps it between the minimum and the maximum, so a value set outside the range is pulled back in. `format` is a `printf` format for one `double` and defaults to "%.0f". The label is also the identity: two sliders with the same label in one scope need a key, as in `"Volume##left"`. `cui_range_slider` takes two floats and no options; its thumbs cannot cross and are moved with the pointer only.
+Both return true on a frame the value changes. `volume` is your `float`. The slider writes it while it is dragged and keeps it between the minimum and the maximum, so a value set outside the range is pulled back in. `format` is a `printf` format for one `double` and defaults to "%.0f". The label is also the identity: two sliders with the same label in one scope need a key, as in `"Volume##left"`. `cui_range_slider` takes two floats and no options. Its thumbs cannot cross.
+
+Tab focuses the range slider. Space switches the focused thumb. An arrow moves it by one percent of the range, or ten percent with Shift. Home and End move it as far as it can go without crossing the other thumb. When the thumbs overlap, a chevron points toward the selected end of the track.
 
 ## Chips and rating
 
@@ -208,7 +210,7 @@ You own the buffer; CUI never writes past `cap`. Returns flags: `CUI_CHANGED`, `
 |---|---|
 | `label`, `placeholder`, `hint`, `error` | |
 | `icon` | Leading icon |
-| `password` | Masks the text and adds a show/hide button |
+| `password` | Masks the text and adds a show/hide button that honors `disabled` |
 | `clearable` | Adds a clear button when not empty (always on for `cui_search`). Hidden for `read_only` fields; `Ctrl+Z` restores the cleared text |
 | `autofocus`, `read_only`, `disabled`, `size`, `width` | |
 
@@ -348,11 +350,11 @@ cui_stepper(ui, steps, 4, current);
 
 `cui_breadcrumb` returns the index of the item that was clicked, or -1. The last item is the current page: it is not a link and is never returned. Each item is told apart by its text, so two levels with the same name need a key, as in `"Docs##2"`.
 
-`cui_pagination` returns true on the frame the page changes. `page` is your `int`, counted from 0 while the buttons show numbers from 1, and it is kept between 0 and `page_count` - 1. With seven pages or fewer, all are shown. Beyond that the first, the last and the pages around the current one stay, with an ellipsis for each gap.
+`cui_pagination` returns true on the frame the page changes. `page` is your `int`, counted from 0 while the buttons show numbers from 1, and it is kept between 0 and `page_count` - 1. With seven pages or fewer, all are shown. Beyond that the first, the last and the pages around the current one stay, with an ellipsis for each gap. A narrow parent leaves room for just the first, current and last page.
 
-`cui_stepper` returns nothing. `current` is the index of the step in progress, from 0: the steps before it are marked done, and passing the number of steps marks them all done. In a narrow row only the current step keeps its label.
+`cui_stepper` returns nothing. `current` is the index of the step in progress, from 0: the steps before it are marked done, and passing the number of steps marks them all done. Each stepper adapts to the width of its own row. In a narrow row only the current step keeps its label.
 
-Keyboard: Tab moves through the breadcrumb's links and the pagination's page buttons, and Enter or Space follows or presses the focused one. The stepper only displays.
+Tab moves through the breadcrumb links and page buttons, with a ring around the focused control. Enter or Space activates it. The stepper only displays.
 
 ## Dropdown and context menu
 
@@ -410,6 +412,8 @@ Appears after a short delay. Moving on to a neighbour while it is open, it glide
 
 `cui_tooltip` returns nothing and takes no `id`: call it on every frame, right after the component it belongs to. That component must be one that reacts to the pointer, such as a button, a link or a hoverable card. Plain text, a badge and an avatar do not, so a tooltip placed after one of them attaches to whatever interactive component came before. The delay is 0.55 seconds, and none when another tooltip was showing less than 0.4 seconds ago. The text is copied, up to 255 bytes. For a card with its own layout, use a hover card.
 
+The hover delay is measured in elapsed time, including when the app sleeps between frames.
+
 Keyboard: a tooltip takes no focus. It belongs to the control before it, which keeps its own keys.
 
 ## Dialog
@@ -429,6 +433,8 @@ cui_dialog(ui, "Edit profile", &open, .description = "Changes are visible to you
 ```
 
 Modal: the scrim blocks everything behind it. Esc, the close button or a click on the scrim close it, unless `persistent`. Options: `description`, `width` (440), `no_close_button`, `persistent`. Opens with a fade and a scale from 0.96, closes faster than it opens.
+
+Escape first clears a text selection or leaves the focused editor. Once focus leaves the editor, the next Escape can close the dialog.
 
 ## Sheet
 
@@ -461,7 +467,7 @@ if (cui_toast_action_clicked(ui, t)) undo();
 
 Toasts stack in the bottom right corner. Older toasts tuck behind the newest one; hovering expands the stack and pauses the timers. Drag a toast right to dismiss it: a fling or a long drag carries its speed off the screen, a short one springs back, and dragging left meets rubbery resistance. Options: `description`, `tone`, `duration` (seconds, default 4, negative to keep), `action`. Use toasts for background events; for the result of a button press, change the button instead.
 
-Keyboard: a toast's action button takes Tab, and Enter or Space presses it. Toasts never take the focus by themselves.
+Tab reaches a visible toast's action button, and Enter or Space activates it until dismissal begins. Toasts never take focus by themselves.
 
 ## Command palette
 
@@ -660,7 +666,7 @@ cui_donut_chart(ui, "share", values, labels, 4, .format = "%.0f%%");
 cui_sparkline(ui, values, 12, CUI_PX(120), 32, CUI_COLOR_SERIES(0));
 ```
 
-Charts draw in once, pick nice axis ticks, show a crosshair that glides between points and a tooltip with every series on hover. Colors come from the theme's series palette, which starts at the accent hue. Options: `width`, `height`, `labels`, `label_count`, `area`, `smooth`, `stacked`, `no_grid`, `no_legend`, `format`, `min`, `max`. With `area` and several series, only the first is filled, so fills never tint each other into a third color.
+Charts draw in once and pick nice axis ticks. Gridlines are faint dashed hairlines over a solid zero line, and the axis labels are small and muted, so the data leads. The line chart shows a crosshair that glides between points and a tooltip with every series on hover. Bars are slim, with rounded tops and a small gap inside a group; hovering a column lays a soft band behind it, brings its label forward and shows a compact chip over it with each series' value (the full tooltip when the chip would not fit). The donut is a thin ring whose segments are parted by real gaps, with the leading or hovered share in the middle; its legend puts a thin bar under each name that shows the share's size against the largest. Colors come from the theme's series palette, which starts at the accent hue. Options: `width`, `height`, `labels`, `label_count`, `area`, `smooth`, `stacked`, `no_grid`, `no_legend`, `format`, `min`, `max`. With `area` and several series, only the first is filled, so fills never tint each other into a third color.
 
 ## Image
 
@@ -757,9 +763,9 @@ if (cui_hold_button(ui, "Hold to delete", .icon = CUI_ICON_TRASH_2)) delete_ever
 
 The hold button fills while pressed (or while Space is held with keyboard focus) and fires once when full; let go early and it springs back. Options: `duration` (1.2 s), `icon`, `variant` (danger by default).
 
-`cui_button_group` is a scope that takes no options and returns nothing: each button inside still returns its own click. Buttons in a group are ghost buttons unless they set a `variant`, and share one outline. `cui_copy_button` returns true on the frame it is clicked, after it has put the text on the clipboard; its `id` keeps the check that shows for 1.6 seconds afterwards. `cui_hold_button` returns true once, on the frame the fill completes, and not again until the button is let go. Its label is also its identity, and `duration` is in seconds. Use the hold button where a slip would cost something, and a confirm button where a second click is enough.
+`cui_button_group` is a scope that takes no options and returns nothing: each button inside still returns its own click. Buttons in a group are ghost buttons unless they set a `variant`, and share one outline. `cui_copy_button` returns true on the frame it is clicked, after it has put the text on the clipboard; its `id` keeps the check that shows for 1.6 seconds afterwards. To copy from a menu item or a status bar instead, call `cui_set_clipboard_text(ui, text)`; `cui_get_clipboard_text(ui)` reads the clipboard for a Paste item. `cui_hold_button` returns true once, on the frame the fill completes, and not again until the button is let go. Its label is also its identity, and `duration` is in seconds. Use the hold button where a slip would cost something, and a confirm button where a second click is enough.
 
-Keyboard: Tab moves through the buttons. Enter or Space presses a button in a group or the copy button, and holding either key fills the hold button.
+Keyboard: Tab moves through the buttons. Enter or Space presses a button in a group or the copy button, and holding either key fills the hold button. The copy button keeps keyboard focus when the check appears and when it goes away.
 
 ## Timeline and progress ring
 
