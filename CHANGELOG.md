@@ -57,12 +57,11 @@ What changed in CUI, newest first. Every component mentioned here runs live in t
 
 ### Fixed
 
-- The wheel scrolls a text area before its enclosing scroll view, then reaches the outer view at the text area's edges. Diagonal input can scroll the text vertically and the outer view horizontally.
-- Tag input enforces its tag limit for every tag in a batch.
-- Pasting a different complete one-time code emits another completion event.
+- The wheel scrolls a text area before its enclosing scroll view, then reaches the outer view at the text area's edges. Diagonal input can scroll the text vertically and the outer view horizontally ([#58](https://github.com/yappologistic/CUI/issues/58)).
+- Tag input enforces its tag limit for every tag in a batch ([#58](https://github.com/yappologistic/CUI/issues/58)).
+- Pasting a different complete one-time code emits another completion event ([#58](https://github.com/yappologistic/CUI/issues/58)).
 - A select opens with Enter without also picking the highlighted item, and a searchable select returns focus to its trigger when its list closes, with animations on too, so Enter reopens it ([#58](https://github.com/yappologistic/CUI/issues/58)).
-- Number fields reject nonfinite drafts and display the accepted value on Enter or focus loss.
-
+- Number fields reject nonfinite drafts and display the accepted value on Enter or focus loss ([#58](https://github.com/yappologistic/CUI/issues/58)).
 - A confirmation popover opened with Enter waits for a separate activation.
 - After Escape leaves a text field in a dialog, the next Escape can close the dialog.
 - A disabled password field's reveal button ignores clicks and is skipped by Tab.
