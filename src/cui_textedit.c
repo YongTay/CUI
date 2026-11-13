@@ -529,6 +529,13 @@ static void cui__edit_follow_caret(cui__edit_frame *c, const cui__edit_result *r
     if (ui->platform.set_text_input_rect) {
         cui_rect cr = area;
         if (!c->multiline) cr.x = area.x + cui__x_at(ui, &c->measure, c->buf, len, e->cursor) - e->scroll_x;
+        else if (c->nlines > 0) {   /* the caret's line, so the candidate list opens under it, not under the whole area */
+            int ln = cui__line_of(c->lines, c->nlines, e->cursor);
+            const cui_text_layout_line *L = &c->lines[ln];
+            cr.x = area.x + cui__text_width(ui, c->font, c->size, c->buf + L->start, e->cursor - L->start, false);
+            cr.y = area.y + (float)ln * c->line_h - e->scroll_y;
+            cr.h = c->line_h;
+        }
         cr.w = 1;
         ui->platform.set_text_input_rect(ui->platform.user, cr);
     }

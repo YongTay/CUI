@@ -767,6 +767,42 @@ static void test_textarea_and_clear(void) {
     cui_destroy(ui);
 }
 
+static cui_rect g_ime_caret;
+static int g_ime_calls;
+static void ime_rect(void *u, cui_rect r) { (void)u; g_ime_caret = r; g_ime_calls++; }
+
+static void test_textarea_ime_caret(void) {
+    printf("text area: the IME is told the caret's line, not the whole area\n");
+    cui_ctx *ui = new_ctx();
+    cui_set_platform(ui, &(cui_platform_iface){ .set_clipboard = clip_set, .get_clipboard = clip_get, .set_text_input_rect = ime_rect });
+    area_ctx a;
+    memset(&a, 0, sizeof a);
+    strcpy(a.buf, "one\ntwo\nthree");
+    run(ui, build_area, &a, 2);
+    CHECK(g_ime_calls == 0);   /* nothing focused */
+    cui_rect area = rect_of(ui, a.id);
+    click_at(ui, build_area, &a, area.x + 12, area.y + 10);   /* on the first line */
+    CHECK(g_ime_calls > 0);
+    cui_rect first = g_ime_caret;
+    CHECK(first.h > 0 && first.h < area.h / 2);
+    CHECK(first.y >= area.y && first.y + first.h <= area.y + area.h);
+    key(ui, build_area, &a, CUI_KEY_DOWN, 0);
+    cui_rect second = g_ime_caret;
+    CHECK_NEAR(second.y - first.y, first.h, 0.01);   /* one line lower, as tall */
+    CHECK_NEAR(second.h, first.h, 0.01);
+    key(ui, build_area, &a, CUI_KEY_DOWN, 0);
+    key(ui, build_area, &a, CUI_KEY_END, 0);
+    cui_rect third = g_ime_caret;
+    CHECK_NEAR(third.y - first.y, 2 * first.h, 0.01);
+    CHECK(third.x > first.x + 10);   /* after "three" */
+    key(ui, build_area, &a, CUI_KEY_ENTER, 0);   /* a new, empty last line */
+    CHECK(strcmp(a.buf, "one\ntwo\nthree\n") == 0);
+    CHECK(g_ime_caret.y > third.y);   /* the area scrolls to keep it in view */
+    CHECK(g_ime_caret.y + g_ime_caret.h <= area.y + area.h);
+    CHECK(g_ime_caret.x < first.x + 12);
+    cui_destroy(ui);
+}
+
 /** Put a scrollable editor inside a viewport with room to scroll both ways. */
 static void build_nested_textarea(cui_ctx *ui, void *user) {
     area_ctx *a = user;
@@ -8261,6 +8297,7 @@ int main(void) {
     test_disabled_password_reveal();
     test_empty_field_caret();
     test_textarea_and_clear();
+    test_textarea_ime_caret();
     test_nested_textarea_wheel();
     test_nested_textarea_mixed_wheel();
     test_canvas_rail_wheel();
