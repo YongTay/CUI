@@ -923,28 +923,52 @@ static void test_number_edit_commit(void) {
 }
 
 /** Let the searchable popup own the only text editor in the frame. */
+typedef struct { int choice; bool searchable; } select_keys_ctx;
 static void build_searchable_select(cui_ctx *ui, void *user) {
+    select_keys_ctx *c = user;
     const char *items[] = { "Alpha", "Beta" };
-    cui_select(ui, "choice", items, 2, user, .searchable = true);
+    cui_select(ui, "choice", items, 2, &c->choice, .searchable = c->searchable);
 }
 
-/** Escape closes the search and leaves its trigger available to Enter. */
+/** Escape closes the search and leaves its trigger available to Enter, also
+ * while the list animates closed; Enter opens a plain select without picking. */
 static void test_searchable_select_reopen(void) {
     printf("searchable select: keyboard reopening after Escape\n");
+    for (int animated = 0; animated < 2; animated++) {
+        cui_ctx *ui = new_ctx();
+        cui_set_reduced_motion(ui, !animated);
+        select_keys_ctx c = { .searchable = true };
+        run(ui, build_searchable_select, &c, 2);
+        key(ui, build_searchable_select, &c, CUI_KEY_TAB, 0);
+        key(ui, build_searchable_select, &c, CUI_KEY_DOWN, 0);
+        run(ui, build_searchable_select, &c, 20);
+        CHECK(cui_wants_keyboard(ui));
+        key(ui, build_searchable_select, &c, CUI_KEY_ESCAPE, 0);
+        run(ui, build_searchable_select, &c, 20);
+        CHECK(!cui_wants_keyboard(ui));
+        key(ui, build_searchable_select, &c, CUI_KEY_ENTER, 0);
+        run(ui, build_searchable_select, &c, 20);
+        CHECK(cui_wants_keyboard(ui));
+        CHECK(c.choice == 0);
+        /* picking an item also gives the keyboard back to the trigger */
+        key(ui, build_searchable_select, &c, CUI_KEY_DOWN, 0);
+        key(ui, build_searchable_select, &c, CUI_KEY_ENTER, 0);
+        run(ui, build_searchable_select, &c, 20);
+        CHECK(c.choice == 1 && !cui_wants_keyboard(ui));
+        key(ui, build_searchable_select, &c, CUI_KEY_ENTER, 0);
+        run(ui, build_searchable_select, &c, 20);
+        CHECK(cui_wants_keyboard(ui) && c.choice == 1);
+        cui_destroy(ui);
+    }
     cui_ctx *ui = new_ctx();
-    int choice = 0;
-    run(ui, build_searchable_select, &choice, 2);
-    key(ui, build_searchable_select, &choice, CUI_KEY_TAB, 0);
-    key(ui, build_searchable_select, &choice, CUI_KEY_DOWN, 0);
-    run(ui, build_searchable_select, &choice, 1);
-    CHECK(cui_wants_keyboard(ui));
-    key(ui, build_searchable_select, &choice, CUI_KEY_ESCAPE, 0);
-    run(ui, build_searchable_select, &choice, 1);
-    CHECK(!cui_wants_keyboard(ui));
-    key(ui, build_searchable_select, &choice, CUI_KEY_ENTER, 0);
-    run(ui, build_searchable_select, &choice, 1);
-    CHECK(cui_wants_keyboard(ui));
-    CHECK(choice == 0);
+    select_keys_ctx c = { .searchable = false };
+    run(ui, build_searchable_select, &c, 2);
+    key(ui, build_searchable_select, &c, CUI_KEY_TAB, 0);
+    key(ui, build_searchable_select, &c, CUI_KEY_ENTER, 0);
+    run(ui, build_searchable_select, &c, 2);
+    key(ui, build_searchable_select, &c, CUI_KEY_DOWN, 0);
+    key(ui, build_searchable_select, &c, CUI_KEY_ENTER, 0);
+    CHECK(c.choice == 1);
     cui_destroy(ui);
 }
 
