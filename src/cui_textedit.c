@@ -864,8 +864,6 @@ bool cui_number_ex(cui_ctx *ui, const char *id_str, double *value, double min, d
     memset(&io, 0, sizeof io);
     io.disabled = o->disabled;
     int f = cui__text_field(ui, id, st->text, sizeof st->text, &io, false, CUI__FIELD_BOXED, NULL);
-    int area = ui->nodes[ui->nodes[row].first].first;
-    /* find the field node (id) to add steppers inside its row */
     if (f & CUI_CHANGED) {
         char *end = NULL;
         double v = strtod(st->text, &end);
@@ -913,14 +911,10 @@ bool cui_number_ex(cui_ctx *ui, const char *id_str, double *value, double min, d
         if (strcmp(st->text, canonical) != 0) {
             const int len = (int)strlen(canonical);
             memcpy(st->text, canonical, (size_t)len + 1);
-            /* Layout already captured the draft. Keep its text and caret in sync. */
             cui_edit_state *edit = cui_state(ui, id, sizeof *edit);
             edit->cursor = edit->anchor = len;
             edit->scroll_x = 0;
-            cui__edit_paint *paint = ui->nodes[area].paint_data;
-            paint->buf = cui__frame_strdup(ui, st->text, len);
-            paint->len = paint->cursor = paint->anchor = len;
-            paint->scroll_x = 0;
+            cui_request_redraw(ui);   /* the field was built with the draft: show the value next frame, even when idle */
         }
     }
     st->last = *value;
