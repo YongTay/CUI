@@ -767,6 +767,42 @@ static void test_textarea_and_clear(void) {
     cui_destroy(ui);
 }
 
+static cui_rect g_ime_caret;
+static int g_ime_calls;
+static void ime_rect(void *u, cui_rect r) { (void)u; g_ime_caret = r; g_ime_calls++; }
+
+static void test_textarea_ime_caret(void) {
+    printf("text area: the IME is told the caret's line, not the whole area\n");
+    cui_ctx *ui = new_ctx();
+    cui_set_platform(ui, &(cui_platform_iface){ .set_clipboard = clip_set, .get_clipboard = clip_get, .set_text_input_rect = ime_rect });
+    area_ctx a;
+    memset(&a, 0, sizeof a);
+    strcpy(a.buf, "one\ntwo\nthree");
+    run(ui, build_area, &a, 2);
+    CHECK(g_ime_calls == 0);   /* nothing focused */
+    cui_rect area = rect_of(ui, a.id);
+    click_at(ui, build_area, &a, area.x + 12, area.y + 10);   /* on the first line */
+    CHECK(g_ime_calls > 0);
+    cui_rect first = g_ime_caret;
+    CHECK(first.h > 0 && first.h < area.h / 2);
+    CHECK(first.y >= area.y && first.y + first.h <= area.y + area.h);
+    key(ui, build_area, &a, CUI_KEY_DOWN, 0);
+    cui_rect second = g_ime_caret;
+    CHECK_NEAR(second.y - first.y, first.h, 0.01);   /* one line lower, as tall */
+    CHECK_NEAR(second.h, first.h, 0.01);
+    key(ui, build_area, &a, CUI_KEY_DOWN, 0);
+    key(ui, build_area, &a, CUI_KEY_END, 0);
+    cui_rect third = g_ime_caret;
+    CHECK_NEAR(third.y - first.y, 2 * first.h, 0.01);
+    CHECK(third.x > first.x + 10);   /* after "three" */
+    key(ui, build_area, &a, CUI_KEY_ENTER, 0);   /* a new, empty last line */
+    CHECK(strcmp(a.buf, "one\ntwo\nthree\n") == 0);
+    CHECK(g_ime_caret.y > third.y);   /* the area scrolls to keep it in view */
+    CHECK(g_ime_caret.y + g_ime_caret.h <= area.y + area.h);
+    CHECK(g_ime_caret.x < first.x + 12);
+    cui_destroy(ui);
+}
+
 /** Put a scrollable editor inside a viewport with room to scroll both ways. */
 static void build_nested_textarea(cui_ctx *ui, void *user) {
     area_ctx *a = user;
@@ -923,28 +959,52 @@ static void test_number_edit_commit(void) {
 }
 
 /** Let the searchable popup own the only text editor in the frame. */
+typedef struct { int choice; bool searchable; } select_keys_ctx;
 static void build_searchable_select(cui_ctx *ui, void *user) {
+    select_keys_ctx *c = user;
     const char *items[] = { "Alpha", "Beta" };
-    cui_select(ui, "choice", items, 2, user, .searchable = true);
+    cui_select(ui, "choice", items, 2, &c->choice, .searchable = c->searchable);
 }
 
-/** Escape closes the search and leaves its trigger available to Enter. */
+/** Escape closes the search and leaves its trigger available to Enter, also
+ * while the list animates closed; Enter opens a plain select without picking. */
 static void test_searchable_select_reopen(void) {
     printf("searchable select: keyboard reopening after Escape\n");
+    for (int animated = 0; animated < 2; animated++) {
+        cui_ctx *ui = new_ctx();
+        cui_set_reduced_motion(ui, !animated);
+        select_keys_ctx c = { .searchable = true };
+        run(ui, build_searchable_select, &c, 2);
+        key(ui, build_searchable_select, &c, CUI_KEY_TAB, 0);
+        key(ui, build_searchable_select, &c, CUI_KEY_DOWN, 0);
+        run(ui, build_searchable_select, &c, 20);
+        CHECK(cui_wants_keyboard(ui));
+        key(ui, build_searchable_select, &c, CUI_KEY_ESCAPE, 0);
+        run(ui, build_searchable_select, &c, 20);
+        CHECK(!cui_wants_keyboard(ui));
+        key(ui, build_searchable_select, &c, CUI_KEY_ENTER, 0);
+        run(ui, build_searchable_select, &c, 20);
+        CHECK(cui_wants_keyboard(ui));
+        CHECK(c.choice == 0);
+        /* picking an item also gives the keyboard back to the trigger */
+        key(ui, build_searchable_select, &c, CUI_KEY_DOWN, 0);
+        key(ui, build_searchable_select, &c, CUI_KEY_ENTER, 0);
+        run(ui, build_searchable_select, &c, 20);
+        CHECK(c.choice == 1 && !cui_wants_keyboard(ui));
+        key(ui, build_searchable_select, &c, CUI_KEY_ENTER, 0);
+        run(ui, build_searchable_select, &c, 20);
+        CHECK(cui_wants_keyboard(ui) && c.choice == 1);
+        cui_destroy(ui);
+    }
     cui_ctx *ui = new_ctx();
-    int choice = 0;
-    run(ui, build_searchable_select, &choice, 2);
-    key(ui, build_searchable_select, &choice, CUI_KEY_TAB, 0);
-    key(ui, build_searchable_select, &choice, CUI_KEY_DOWN, 0);
-    run(ui, build_searchable_select, &choice, 1);
-    CHECK(cui_wants_keyboard(ui));
-    key(ui, build_searchable_select, &choice, CUI_KEY_ESCAPE, 0);
-    run(ui, build_searchable_select, &choice, 1);
-    CHECK(!cui_wants_keyboard(ui));
-    key(ui, build_searchable_select, &choice, CUI_KEY_ENTER, 0);
-    run(ui, build_searchable_select, &choice, 1);
-    CHECK(cui_wants_keyboard(ui));
-    CHECK(choice == 0);
+    select_keys_ctx c = { .searchable = false };
+    run(ui, build_searchable_select, &c, 2);
+    key(ui, build_searchable_select, &c, CUI_KEY_TAB, 0);
+    key(ui, build_searchable_select, &c, CUI_KEY_ENTER, 0);
+    run(ui, build_searchable_select, &c, 2);
+    key(ui, build_searchable_select, &c, CUI_KEY_DOWN, 0);
+    key(ui, build_searchable_select, &c, CUI_KEY_ENTER, 0);
+    CHECK(c.choice == 1);
     cui_destroy(ui);
 }
 
@@ -8237,6 +8297,7 @@ int main(void) {
     test_disabled_password_reveal();
     test_empty_field_caret();
     test_textarea_and_clear();
+    test_textarea_ime_caret();
     test_nested_textarea_wheel();
     test_nested_textarea_mixed_wheel();
     test_canvas_rail_wheel();

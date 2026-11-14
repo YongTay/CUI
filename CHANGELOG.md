@@ -57,12 +57,11 @@ What changed in CUI, newest first. Every component mentioned here runs live in t
 
 ### Fixed
 
-- The wheel scrolls a text area before its enclosing scroll view, then reaches the outer view at the text area's edges. Diagonal input can scroll the text vertically and the outer view horizontally.
-- Tag input enforces its tag limit for every tag in a batch.
-- Pasting a different complete one-time code emits another completion event.
-- A searchable select returns focus to its trigger on dismissal and can reopen with Enter.
-- Number fields reject nonfinite drafts and display the accepted value on Enter or focus loss.
-
+- The wheel scrolls a text area before its enclosing scroll view, then reaches the outer view at the text area's edges. Diagonal input can scroll the text vertically and the outer view horizontally ([#58](https://github.com/yappologistic/CUI/issues/58)).
+- Tag input enforces its tag limit for every tag in a batch ([#58](https://github.com/yappologistic/CUI/issues/58)).
+- Pasting a different complete one-time code emits another completion event ([#58](https://github.com/yappologistic/CUI/issues/58)).
+- A select opens with Enter without also picking the highlighted item, and a searchable select returns focus to its trigger when its list closes, with animations on too, so Enter reopens it ([#58](https://github.com/yappologistic/CUI/issues/58)).
+- Number fields reject nonfinite drafts and display the accepted value on Enter or focus loss ([#58](https://github.com/yappologistic/CUI/issues/58)).
 - A confirmation popover opened with Enter waits for a separate activation.
 - After Escape leaves a text field in a dialog, the next Escape can close the dialog.
 - A disabled password field's reveal button ignores clicks and is skipped by Tab.
@@ -75,6 +74,10 @@ What changed in CUI, newest first. Every component mentioned here runs live in t
 - Steppers with repeated captions adapt independently to the width of their own rows.
 - macOS: Quit from the app menu (Cmd-Q), the Dock or AppleScript ended the process from inside the event loop, so nothing after `cui_app_run` ran: no cleanup, no saving, and libraries that check their resources at exit could crash. It now ends `cui_app_run` (or makes `cui_app_frame` return false) as closing the window does, at once even when the app is idle ([#29](https://github.com/yappologistic/CUI/issues/29)).
 - Nav items: when no item of a group was selected, the highlight stayed on the item selected before, and the next selection glided over from there. The highlight now goes away, and the next selection appears in place ([#35](https://github.com/yappologistic/CUI/issues/35)).
+- **Text areas told the input method the whole area as the caret**, so the IME candidate window opened at the area's top-left corner or under its bottom edge. `set_text_input_rect` now gets the caret's line, one line tall, as in single-line fields and the code editor ([#56](https://github.com/yappologistic/CUI/issues/56)).
+- **Windows: the IME opens at the caret.** The Win32 backend implements `set_text_input_rect`: it sets the IMM composition window to the caret, the candidate list under the line with the line excluded so it is never covered, and a hidden system caret for input methods, magnifiers and screen readers that follow it, in client pixels at the window's DPI. Before, Chinese, Japanese and Korean input methods opened their windows at the top-left of the screen. Committed text arrives once, as before, including characters outside the BMP ([#56](https://github.com/yappologistic/CUI/issues/56)).
+- **Docs site: input methods work in the live previews.** Browsers place an IME only at a focused text input, and the previews are canvases. While a text field in a preview is being edited, the keyboard now goes to a hidden text area kept at the field's caret: the candidate window opens there, the text being composed shows in place, and the committed text goes to the field ([#56](https://github.com/yappologistic/CUI/issues/56)).
+- **macOS: the IME opens at the caret.** The Cocoa view answered `firstRectForCharacterRange` with the view's top-left corner, so the candidate window opened there. It now returns the caret from `set_text_input_rect` and tells the input context when it moves ([#56](https://github.com/yappologistic/CUI/issues/56)).
 - **SDL2: the IME candidate window follows the caret.** The SDL2 backend now implements `cui_platform_iface.set_text_input_rect` (`SDL_SetTextInputRect`) and asks for the system candidate list with `SDL_HINT_IME_SHOW_UI`. Before, the candidate window never moved with the caret ([#56](https://github.com/yappologistic/CUI/issues/56)).
 - **An empty text field showed no caret.** At offset 0 the caret bar stands in the field's padding, left of the text, and the text's clip rectangle cut all of it away: an empty focused field looked dead and never blinked. The bar is now drawn against the field's clip, so it shows and blinks like anywhere else, with or without a placeholder (`tests/test_main.c` covers it).
 

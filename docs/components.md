@@ -245,7 +245,7 @@ cui_select(ui, "country", items, 5, &country, .label = "Country");
 cui_select(ui, "lang", languages, n, &lang, .searchable = true, .placeholder = "Pick a language");
 ```
 
-`searchable` adds a filter field at the top of the list (a combobox). Options: `label`, `placeholder`, `icons`, `searchable`, `disabled`, `width`. Up/Down open the list and move the highlight. In a searchable select, Enter opens the list or chooses the highlighted item. Esc closes the list and returns focus from the search field to the trigger.
+`searchable` adds a filter field at the top of the list (a combobox). Options: `label`, `placeholder`, `icons`, `searchable`, `disabled`, `width`. Up/Down open the list and move the highlight. Enter opens the list or chooses the highlighted item. Esc closes the list, and in a searchable select returns focus from the search field to the trigger.
 
 Returns true on the frame the choice changes. `country` is your `int`, the index of the chosen item. A value outside 0 to `count` - 1, such as -1, means nothing is chosen, and the field then shows `placeholder`, or "Select". Choosing an item closes the list, which scrolls once it is taller than 300 points. The search keeps the items that contain the typed text, whatever the case. For several choices use the multi-select, and for two to five options that should stay visible use a segmented control.
 
