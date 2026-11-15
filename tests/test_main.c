@@ -3124,6 +3124,135 @@ static void test_dialog_escape_after_edit(void) {
     cui_destroy(ui);
 }
 
+typedef struct { bool open, draggable, resizable; int inside; cui_id button; } dlg_move_ctx;
+
+static void build_dialog_move(cui_ctx *ui, void *u) {
+    dlg_move_ctx *d = u;
+    cui_dialog(ui, "Move me", &d->open, .draggable = d->draggable, .resizable = d->resizable) {
+        cui_box_begin(ui, &(cui_box){ .width = CUI_FILL, .height = CUI_PX(40) });
+        cui_box_end(ui);
+        if (cui_button(ui, "Inside")) d->inside++;
+        d->button = cui_last_id(ui);
+    }
+}
+
+/* The dialog's own ids, from the same derivation cui_dialog_begin uses. */
+static cui_id dialog_move_id(cui_ctx *ui) { return cui_make_id(ui, "Move me") ^ 0xD1A106u; }
+
+/* Press at (x, y), travel to (x + dx, y + dy) in a few frames, release. */
+static void drag_by(cui_ctx *ui, build_fn fn, void *user, float x, float y, float dx, float dy) {
+    cui_input_mouse_move(ui, x, y);
+    run(ui, fn, user, 2);
+    cui_input_mouse_button(ui, CUI_MOUSE_LEFT, true);
+    run(ui, fn, user, 1);
+    for (int i = 1; i <= 4; i++) { cui_input_mouse_move(ui, x + dx * i / 4, y + dy * i / 4); run(ui, fn, user, 1); }
+    cui_input_mouse_button(ui, CUI_MOUSE_LEFT, false);
+    run(ui, fn, user, 2);
+}
+
+static void test_dialog_drag(void) {
+    printf("dialog: the header moves it, a plain dialog stays put\n");
+    cui_ctx *ui = new_ctx();
+    dlg_move_ctx d = { .open = true, .draggable = true };
+    run(ui, build_dialog_move, &d, 3);
+    cui_rect head = rect_of(ui, dialog_move_id(ui) ^ 0xD2A6u);
+    cui_rect b0 = rect_of(ui, d.button);
+    CHECK(head.w > 0);
+    /* grab the header's empty right side, left of the close button, and drag far outside the panel */
+    drag_by(ui, build_dialog_move, &d, head.x + 40, head.y + head.h / 2, 120, 80);
+    CHECK(d.open);                       /* letting go on the scrim is not a click on it */
+    cui_vec2 c = center(rect_of(ui, d.button));
+    click_at(ui, build_dialog_move, &d, c.x + 120, c.y + 80);
+    CHECK(d.inside == 1);                /* the button is under the pointer at its new place */
+    CHECK_NEAR(rect_of(ui, d.button).x, b0.x, 0.01);   /* layout stays centred; the move is a paint offset */
+    /* it cannot leave the window */
+    drag_by(ui, build_dialog_move, &d, head.x + 40 + 120, head.y + head.h / 2 + 80, 5000, 5000);
+    cui_rect pr = rect_of(ui, dialog_move_id(ui) ^ 0x9A4Eu);
+    c = center(rect_of(ui, d.button));
+    click_at(ui, build_dialog_move, &d, c.x + (800 - pr.w) / 2, c.y + (600 - pr.h) / 2);
+    CHECK(d.inside == 2);
+    /* closed and opened again it is centred */
+    d.open = false; run(ui, build_dialog_move, &d, 4);
+    d.open = true; run(ui, build_dialog_move, &d, 4);
+    c = center(rect_of(ui, d.button));
+    click_at(ui, build_dialog_move, &d, c.x, c.y);
+    CHECK(d.inside == 3);
+    /* not draggable: the same drag does nothing */
+    d.draggable = false;
+    drag_by(ui, build_dialog_move, &d, head.x + 40, head.y + head.h / 2, 120, 80);
+    click_at(ui, build_dialog_move, &d, c.x, c.y);
+    CHECK(d.inside == 4);
+    cui_destroy(ui);
+}
+
+static void test_dialog_resize(void) {
+    printf("dialog: the edges resize it, down to a minimum\n");
+    cui_ctx *ui = new_ctx();
+    dlg_move_ctx d = { .open = true, .resizable = true };
+    run(ui, build_dialog_move, &d, 3);
+    cui_id pid = dialog_move_id(ui) ^ 0x9A4Eu;
+    cui_rect p0 = rect_of(ui, pid);
+    CHECK_NEAR(p0.w, 440, 0.01);
+    /* right edge, 60 wider; the left edge stays where it was */
+    drag_by(ui, build_dialog_move, &d, p0.x + p0.w - 2, p0.y + p0.h / 2, 60, 0);
+    cui_rect p1 = rect_of(ui, pid);
+    CHECK(d.open);
+    CHECK_NEAR(p1.w, 500, 0.5);
+    /* bottom edge, 50 taller; the content keeps its place at the top */
+    float by0 = rect_of(ui, d.button).y;
+    drag_by(ui, build_dialog_move, &d, p1.x + p1.w / 2 + 30, p1.y + p1.h - 2, 0, 50);
+    cui_rect p2 = rect_of(ui, pid);
+    CHECK_NEAR(p2.h, p1.h + 50, 0.5);
+    CHECK_NEAR(rect_of(ui, d.button).y - p2.y, by0 - p1.y, 0.5);
+    /* the left edge (still where it began: a centred panel moves half of what it grows) shrinks it past the minimum; it stops there */
+    drag_by(ui, build_dialog_move, &d, p0.x + 2, p2.y + p2.h / 2 + 30, 2000, 0);
+    CHECK_NEAR(rect_of(ui, pid).w, 240, 0.5);
+    CHECK(d.open);
+    /* a button on the panel still works at the new size */
+    cui_vec2 c = center(rect_of(ui, d.button));
+    float shift = (p0.x + 500) - 240 / 2 - 400;   /* the right edge stayed, so the panel sits left of centre by this */
+    click_at(ui, build_dialog_move, &d, c.x + shift, c.y + 25);
+    CHECK(d.inside == 1);
+    /* without the option the edge is just the panel */
+    cui_destroy(ui);
+    ui = new_ctx();
+    d = (dlg_move_ctx){ .open = true };
+    run(ui, build_dialog_move, &d, 3);
+    p0 = rect_of(ui, dialog_move_id(ui) ^ 0x9A4Eu);
+    drag_by(ui, build_dialog_move, &d, p0.x + p0.w - 2, p0.y + p0.h / 2, 60, 0);
+    CHECK_NEAR(rect_of(ui, dialog_move_id(ui) ^ 0x9A4Eu).w, 440, 0.01);
+    cui_destroy(ui);
+}
+
+typedef struct { bool open; cui_id ok; } dlg_foot_ctx;
+static void build_dialog_foot(cui_ctx *ui, void *u) {
+    dlg_foot_ctx *d = u;
+    cui_dialog(ui, "Footer", &d->open, .resizable = true) {
+        cui_text(ui, "Body");
+        cui_dialog_footer(ui) { cui_button(ui, "OK"); d->ok = cui_last_id(ui); }
+    }
+}
+/** A dialog resized taller keeps its footer at the bottom, and a narrower window narrows it. */
+static void test_dialog_resize_footer_and_window(void) {
+    printf("dialog: the footer follows a resize, and the width follows a smaller window\n");
+    cui_ctx *ui = new_ctx();
+    dlg_foot_ctx d = { true, 0 };
+    run(ui, build_dialog_foot, &d, 3);
+    cui_id pid = (cui_make_id(ui, "Footer") ^ 0xD1A106u) ^ 0x9A4Eu;
+    cui_rect p0 = rect_of(ui, pid), b0 = rect_of(ui, d.ok);
+    float gap0 = (p0.y + p0.h) - (b0.y + b0.h);
+    drag_by(ui, build_dialog_foot, &d, p0.x + p0.w / 2 + 30, p0.y + p0.h - 2, 0, 80);
+    cui_rect p1 = rect_of(ui, pid), b1 = rect_of(ui, d.ok);
+    CHECK_NEAR(p1.h, p0.h + 80, 0.5);
+    CHECK_NEAR((p1.y + p1.h) - (b1.y + b1.h), gap0, 0.5);   /* the footer moved down with the bottom edge */
+    drag_by(ui, build_dialog_foot, &d, p1.x + p1.w - 2, p1.y + p1.h / 2, 200, 0);
+    CHECK_NEAR(rect_of(ui, pid).w, 640, 0.5);
+    cui_set_viewport(ui, 500, 600, 1);
+    run(ui, build_dialog_foot, &d, 3);
+    CHECK(rect_of(ui, pid).w <= 500 - 32 + 0.5f);              /* the stored width follows the window */
+    cui_destroy(ui);
+}
+
 typedef struct { int chosen; cui_id trigger; } menu_ctx;
 static void build_menu(cui_ctx *ui, void *u) {
     menu_ctx *m = u;
@@ -7502,6 +7631,34 @@ static void ced_text(ced_ctx *c, const char *s) { snprintf(c->buf, sizeof c->buf
 static void ced_sel(cui_ctx *ui, ced_ctx *c, int a, int b) { cui_code_editor_select(ui, "ed", a, b); run(ui, build_ced, c, 1); }
 static int ced_at(const ced_ctx *c, const char *needle) { const char *p = strstr(c->buf, needle); return p ? (int)(p - c->buf) : -1; }
 
+/* Keep line numbers and other controls out of the glyph count. */
+static void build_ced_render(cui_ctx *ui, void *u) {
+    ced_ctx *c = u;
+    cui_code_editor(ui, "ed", c->buf, sizeof c->buf, .lang = c->lang,
+                    .read_only = true, .no_line_numbers = true, .height = 200, .tab_size = 4);
+}
+
+static void test_code_editor_indented_text(void) {
+    printf("code editor: visible text after leading spaces and tabs\n");
+    static const char *const langs[] = { "text", "plain", "c", NULL };
+    static const char *const inputs[] = { "abc", "\tabc", "    abc", "a\tbc", "\t\tabc", " \tabc" };
+    for (int l = 0; l < 4; l++) {
+        for (int i = 0; i < 6; i++) {
+            cui_ctx *ui = new_ctx();
+            ced_ctx c = {0};
+            c.lang = langs[l];
+            ced_text(&c, inputs[i]);
+            run(ui, build_ced_render, &c, 3);
+            const cui_draw_data *dd = cui_get_draw_data(ui);
+            int glyph_vertices = 0;
+            for (int v = 0; v < dd->vertex_count; v++)
+                if (dd->vertices[v].mode == CUI_SHADE_TEXT) glyph_vertices++;
+            CHECK(glyph_vertices == 3 * 4);   /* a, b, c each emit one quad */
+            cui_destroy(ui);
+        }
+    }
+}
+
 static void test_code_editor(void) {
     printf("code editor: typing, indentation, undo, clipboard, find, brackets, capacity, virtualization\n");
     cui_ctx *ui = new_ctx();
@@ -9523,6 +9680,7 @@ int main(void) {
     test_hex_view();
     test_markdown();
     test_code_editor();
+    test_code_editor_indented_text();
     test_diff();
     test_dials();
     test_candles();
@@ -9562,6 +9720,9 @@ int main(void) {
     test_text_capacity();
     test_dialog();
     test_dialog_escape_after_edit();
+    test_dialog_drag();
+    test_dialog_resize();
+    test_dialog_resize_footer_and_window();
     test_menu();
     test_focus_trap();
     test_tag_limit_batch();

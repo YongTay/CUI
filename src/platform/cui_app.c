@@ -330,3 +330,9 @@ bool cui_app_file_dialog(cui_app *app, const cui_file_dialog_opts *opts, char *o
 
 bool cui_app_open_url(const char *url) { return url && *url && cui__plat_open_url(url); }
 
+void cui_app_maximize(cui_app *app) {
+    app = cui__app_or_current(app);
+    /* a fixed-size window has no maximized state: on Win32 its borders are gone, and other
+     * backends would still grow it */
+    if (app && !app->desc.fixed_size) cui__plat_maximize(app);
+}

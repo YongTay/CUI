@@ -55,6 +55,13 @@ if (cui_button(ui, "Quit")) cui_app_quit(NULL);
 
 `NULL` means the app that is running, which is how a `cui_app_run` callback reaches its window. With the loop form you can pass your `cui_app *` instead. `cui_app_quit` ends the loop after the current frame.
 
+`cui_app_maximize` maximizes the window, as its maximize button does. To open maximized, call it right after `cui_app_create`, or once on the first frame of a `cui_app_run` callback. It does nothing for a `fixed_size` window, or on Linux under a window manager that does not support it.
+
+```c
+static bool started;
+if (!started) { cui_app_maximize(NULL); started = true; }
+```
+
 `cui_app_native_window` returns the system's handle (an `HWND`, an `NSWindow *`, an X11 `Window`, an `SDL_Window *` or a `GLFWwindow *`) for the things CUI does not wrap, such as a window icon or a system tray entry. `cui_app_backend` names the backend in use.
 
 File dialogs, opening links and screenshots are in [Getting started](getting-started.md#7-files-and-links).

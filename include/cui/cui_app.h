@@ -82,6 +82,11 @@ CUI_API void cui_app_set_title(cui_app *app, const char *title);
 /* The window's size in logical points (the same units as cui_app_desc.width). */
 CUI_API void cui_app_set_size(cui_app *app, int width, int height);
 CUI_API cui_vec2 cui_app_size(cui_app *app);
+/* Maximizes the window on its display, as the title bar's maximize button does. NULL means the
+ * running app, so a cui_app_run callback can call it on its first frame; with the loop form it is
+ * fine right after cui_app_create. Nothing happens for a fixed-size window or where the window
+ * manager does not support it (an X11 window manager without EWMH). */
+CUI_API void cui_app_maximize(cui_app *app);
 /* Starts or stops following the OS light/dark setting, as cui_app_desc.follow_system_theme
  * does at creation, for a theme switcher with Light, Dark and System. Starting applies the
  * OS setting at once, where the platform reports one. Stopping keeps the current theme, so

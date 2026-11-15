@@ -804,6 +804,8 @@ typedef struct cui_dialog_opts {
     float width;               /* default 440 */
     bool no_close_button;      /* hides the x in the corner (Esc and a click outside still close it unless `persistent`) */
     bool persistent;           /* clicking outside or Esc does not close */
+    bool draggable;            /* the header moves the dialog; it stays inside the window */
+    bool resizable;            /* the edges and corners resize it, down to a minimum size; the content is clipped when it no longer fits */
 } cui_dialog_opts;
 /* Modal dialog. Shown while *open is true; closing sets it to false.
  * Escape leaves a focused text field before it can dismiss the dialog. */
@@ -1693,6 +1695,8 @@ CUI_API bool cui_markdown_apply_task(char *text, const cui_markdown_result *resu
  *     if (r.changed) recompile(src);
  *     cui_textf(ui, "Ln %d, Col %d", r.line, r.column);
  *
+ * With .lang = "text", indentation is preserved without syntax colors;
+ * tabs advance to the next tab_size column stop.
  * Lines never wrap; long ones scroll sideways while the gutter stays. Only
  * the lines in view are tokenized and drawn, so files of tens of thousands
  * of lines stay fast. An edit that would not fit in the capacity is refused
