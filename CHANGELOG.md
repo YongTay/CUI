@@ -6,7 +6,11 @@ What changed in CUI, newest first. Every component mentioned here runs live in t
 
 ### Added
 
+- Trace viewer links: `.links` and `.link_count` draw dependencies between spans as curves with an arrowhead, from the end of one span to the start of another and across lanes, bright when they touch the selected or hovered span. `hovered_link` in the result says which link is under the pointer, and `cui_trace_span_rect` says where a span was drawn. See [Trace viewer](docs/components-more.md#trace-viewer).
+- The dot chart and the event track take a label function (`cui_axis_label_fn`) for text a format string cannot write: month names, dates, a decimal comma. The dot chart's `.x_label` writes its x labels and the readout's x and `.value_label` the readout's value; the event track's `.label` writes its axis labels and the selected event's time. Each has a user pointer, and without one nothing changes. See [Dot-matrix chart](docs/components-more.md#dot-matrix-chart) and [Event track](docs/components-more.md#event-track) ([#28](https://github.com/yappologistic/CUI/issues/28)).
+- Window state and placement: `cui_app_minimize`, `cui_app_restore` (back from maximized or minimized), `cui_app_window_state` and `cui_app_set_position`; `cui_app_placement` reads the state and the normal size and place, also while the window is maximized, and `cui_app_desc.placement` reopens a window there, maximized if it was. See [Reopen where it was](docs/apps.md#reopen-where-it-was).
 - `cui_app_maximize(app)` maximizes the window on every backend, right after `cui_app_create` or on the first frame of a `cui_app_run` callback (`NULL` means the running app), for an app that opens maximized ([#18](https://github.com/yappologistic/CUI/issues/18), [#19](https://github.com/yappologistic/CUI/pull/19)).
+- `cui_wheel_region` and `cui_wheel_take`: a custom canvas can take the mouse wheel to zoom, pan or scroll its own drawing, as the built-in charts and graphs do. Over the area the paint function marks, the wheel stops at the canvas instead of scrolling the page; everywhere else it scrolls as before. A canvas in a disabled scope leaves the wheel to the page, and its paint function sees `cui_is_disabled`. See [Wheel input](docs/custom-components.md#wheel-input).
 - SQL syntax colors: `.lang = "sql"` in the code block, the code editor and the diff viewer. Keywords, types and `NULL`, `TRUE` and `FALSE` match in any case, as SQL does; `--` starts a comment and `/* */` comments run across lines. The keywords cover standard SQL and common extensions such as `ilike`, `qualify`, `pivot` and `pragma` ([#33](https://github.com/yappologistic/CUI/issues/33)).
 - `cui_dialog` takes `.draggable` and `.resizable`: the header moves the dialog and its edges and corners resize it, inside the window and down to a minimum size; once resized, the footer stays at the bottom edge. Both are off by default, so existing dialogs do not change. See [Dialog](docs/components.md#dialog) ([#63](https://github.com/yappologistic/CUI/pull/63)).
 - `cui_set_clipboard_text` and `cui_get_clipboard_text`: copy from a menu item or a status bar ("Copy path") and read the clipboard for a Paste item, through the same platform hooks the copy button and text fields use ([#32](https://github.com/yappologistic/CUI/issues/32)).
@@ -44,6 +48,7 @@ What changed in CUI, newest first. Every component mentioned here runs live in t
 
 ### Changed
 
+- **The file browser's sidebar lists drives and volumes**: drive letters with their labels on Windows, mounted data volumes on Linux and browsable volumes on macOS, under their own heading below Places. It scrolls, so custom `places` are no longer cut off after six, and Reload (F5) or reopening a file picker reads the drives again. The filter field now has the height of the path bar beside it ([#96](https://github.com/yappologistic/CUI/issues/96)).
 - **Renderers: a sixth shading mode**, `CUI_SHADE_DITHER`, for the dither components. A renderer of your own needs its few lines from the reference shader in [Rendering](docs/rendering.md) to draw them; everything else draws as before.
 - **Line charts take `stacked`**: each series sits on the ones before it, and the axis covers their sum. It used to apply to bar charts only.
 - **A calmer series palette.** The six chart colors keep their order (blue, orange, aqua, violet, yellow, magenta), so neighbours stay apart under color blindness, but now share one lightness and about one chroma in each mode. No series shouts over another or over the rest of the interface, and the light colors keep 4.2:1 or more on white.
@@ -59,6 +64,7 @@ What changed in CUI, newest first. Every component mentioned here runs live in t
 
 ### Fixed
 
+- The file sidebar highlights one enclosing place or volume, so Home and its drive no longer appear selected together. Double-clicks after an idle interval use the receiving frame's time, fixing missed folder opens in an event-driven app.
 - Disabled flame graphs and timeline editors ignore wheel, pointer and keyboard gestures ([#85](https://github.com/yappologistic/CUI/issues/85)).
 - Disabled node editors ignore wheel zoom and cancel in-progress gestures ([#85](https://github.com/yappologistic/CUI/issues/85)).
 - A disabled veil keeps its cover visible and leaves clicks available to the widgets behind it ([#85](https://github.com/yappologistic/CUI/issues/85)).
@@ -66,6 +72,7 @@ What changed in CUI, newest first. Every component mentioned here runs live in t
 - Disabling a time histogram cancels its active selection drag ([#85](https://github.com/yappologistic/CUI/issues/85)).
 - Read-only and disabled query builders leave the supplied rules unchanged ([#75](https://github.com/yappologistic/CUI/issues/75)).
 - Read-only week calendar events and Gantt tasks can be activated without editing them ([#75](https://github.com/yappologistic/CUI/issues/75)).
+- The week calendar checks the drag threshold even when motion and release arrive in the same frame ([#75](https://github.com/yappologistic/CUI/issues/75)).
 - The trace viewer reports view changes when a measurement is drawn or cleared ([#71](https://github.com/yappologistic/CUI/issues/71)).
 - Activating a dot chart from the keyboard before moving its cursor reports the middle sample ([#71](https://github.com/yappologistic/CUI/issues/71)).
 - Clicking a Sankey ribbon reports which input link was clicked ([#71](https://github.com/yappologistic/CUI/issues/71)).
@@ -96,6 +103,7 @@ What changed in CUI, newest first. Every component mentioned here runs live in t
 - Date and color pickers show keyboard focus on their triggers ([#83](https://github.com/yappologistic/CUI/issues/83)).
 - An open color picker reflects external RGB changes and preserves alpha while editing ([#83](https://github.com/yappologistic/CUI/issues/83)).
 - Keyboard focus keeps the wheel labels and ruler scale visible ([#83](https://github.com/yappologistic/CUI/issues/83)).
+- The time ruler of the flame graph, the trace viewer and the network waterfall reads hours-long and days-long captures: past 20 seconds it steps like a clock (30 s, 1, 2, 5, 10, 15 and 30 min, 1, 2, 3, 6 and 12 h, then days) and labels each tick from its largest part down, such as "4 min 50 s" or "33 d 10 h 30 min", where it used to print "2851200 s". Steps under a second keep their labels; with whole-second steps, ticks from a minute on read as minutes and seconds ("1 min 10 s" where it said "70 s"). Span tooltips and the measured range give long durations in min, h or d.
 - The wheel scrolls a text area before its enclosing scroll view, then reaches the outer view at the text area's edges. Diagonal input can scroll the text vertically and the outer view horizontally ([#58](https://github.com/yappologistic/CUI/issues/58)).
 - Tag input enforces its tag limit for every tag in a batch ([#58](https://github.com/yappologistic/CUI/issues/58)).
 - Pasting a different complete one-time code emits another completion event ([#58](https://github.com/yappologistic/CUI/issues/58)).
